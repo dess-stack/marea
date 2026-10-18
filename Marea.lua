@@ -5,20 +5,21 @@
     ██║╚██╔╝██║██╔══██║██╔══██╗██╔══╝  ██╔══██║
     ██║ ╚═╝ ██║██║  ██║██║  ██║███████╗██║  ██║
     ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
-             A D R I A T I C   A I M   S U I T E
+              A D R I A T I C   A I M   S U I T E
 --===========================================================================
 --  MAREA  |  Aimbot + ESP + Player List
---  Menu  : RIGHT SHIFT        Aim : E (hold, remappable)
---  Execs : Solara / Delta / Wave / Xeno / Krnl / Synapse / Script-Ware
---  Raw   : raw.githubusercontent.com/<USER>/<REPO>/main/Marea.lua
+--  Menu : RIGHT SHIFT        Aim : E (hold, remappable)
+--  Execs: Solara / Delta / Wave / Xeno / Krnl / Synapse / Script-Ware
+--  Raw  : raw.githubusercontent.com/<USER>/<REPO>/main/Marea.lua
 --===========================================================================
 ]]
 
 local META = {
     Name    = "Marea",
-    Version = "1.0.0",
-    Tagline = "Adriatic Aim Suite",
+    Version = "1.1.0",
+    Tagline = "ADRIATIC AIM SUITE",
     Author  = "you",
+    Repo    = "github.com/<USER>/<REPO>",
 }
 
 getgenv = getgenv or function() return _G end
@@ -29,11 +30,11 @@ local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
+local GuiService       = game:GetService("GuiService")
 local Workspace        = game:GetService("Workspace")
 
 local LP     = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
-local Mouse  = LP:GetMouse()
 
 local RayFilter = Enum.RaycastFilterType.Blacklist
 pcall(function() RayFilter = Enum.RaycastFilterType.Exclude end)
@@ -51,13 +52,13 @@ local function mkDraw(...)
     local d = Drawing.new(...); table.insert(Drawings, d); return d
 end
 
---=============================== IDENTITÉ =================================
+--=============================== BRAND ====================================
 local BRAND = {
-    ACCENT  = Color3.fromRGB(0, 200, 190),   -- teal Adriatique
-    ACCENT2 = Color3.fromRGB(232, 193, 112), -- or vénitien
+    ACCENT  = Color3.fromRGB(0, 200, 190),
+    ACCENT2 = Color3.fromRGB(232, 193, 112),
     ENEMY   = Color3.fromRGB(255, 90, 90),
     ALLY    = Color3.fromRGB(0, 200, 190),
-    BANNER  = Color3.fromRGB(120, 230, 225),
+    LOCK    = Color3.fromRGB(255, 205, 90),
 }
 
 local function banner()
@@ -68,50 +69,54 @@ local function banner()
   | |  | |/ ___ \|  _ <| |___ / ___ \
   |_|  |_/_/   \_\_| \_\_____/_/   \_\
 ]])
-    print(("  %s v%s  •  %s"):format(META.Name, META.Version, META.Tagline))
+    print(("  %s v%s  |  %s"):format(META.Name, META.Version, META.Tagline))
+    print(("  repo: %s"):format(META.Repo))
     local ok, exec = pcall(function() return identifyexecutor() end)
-    print(("  executor: %s  •  %s"):format(ok and exec or "unknown", os.date("%Y-%m-%d %H:%M")))
+    print(("  executor: %s  |  %s"):format(ok and exec or "unknown", os.date("%Y-%m-%d %H:%M")))
 end
 
 --=============================== CONFIG ===================================
 local Config = {
     Aimbot = {
-        Enabled     = false,
-        Key         = Enum.KeyCode.E,
-        Mode        = "Hold",
-        TeamCheck   = true,
-        WallCheck   = true,
-        FOV         = 140,
-        ShowFOV     = true,
-        Smoothness  = 0.30,
-        Hitbox      = "Head",
-        Prediction  = 0.12,
-        LockTarget  = false,
+        Enabled    = false,
+        Key        = Enum.KeyCode.E,
+        Mode       = "Hold",       -- Hold / Toggle
+        Origin     = "Mouse",      -- Mouse / Center
+        TeamCheck  = true,
+        WallCheck  = true,
+        FOV        = 140,
+        ShowFOV    = true,
+        Smoothness = 0.30,
+        Hitbox     = "Head",
+        Prediction = 0.12,
+        LockTarget = false,
     },
     ESP = {
-        Enabled   = true,
-        Box       = true,
-        Name      = true,
-        Health    = true,
-        Distance  = true,
-        Tracer    = false,
-        Chams     = false,
-        TeamCheck = false,
-        MaxDist   = 1000,
-        TextSize  = 13,
+        Enabled    = true,
+        Box        = true,
+        Name       = true,
+        Health     = true,
+        Distance   = true,
+        Tracer     = false,
+        Chams      = false,
+        TargetRing = true,
+        TeamCheck  = false,
+        MaxDist    = 1000,
+        TextSize   = 13,
     },
     Misc = {
         Fullbright = false,
         Watermark  = true,
+        StatusBar  = true,
         MenuKey    = Enum.KeyCode.RightShift,
     },
 }
 
---=============================== OUTILS ===================================
+--=============================== HELPERS ==================================
 local function alive(plr)
     local char = plr.Character
     if not char then return nil end
-    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hum  = char:FindFirstChildOfClass("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
     if not hum or not root or hum.Health <= 0 then return nil end
     return char, hum, root
@@ -136,14 +141,34 @@ end
 
 local function keyMatches(input, key)
     if not key then return false end
-    if input.KeyCode == key then return true end
-    if input.UserInputType == key then return true end
-    return false
+    return input.KeyCode == key or input.UserInputType == key
 end
+
+-- Screen space (Drawing) vs viewport space (camera math) --------------------
+local function guiInset()
+    local ok, inset = pcall(function() return GuiService:GetGuiInset() end)
+    return (ok and inset) or Vector2.new(0, 0)
+end
+
+local function mouseViewport()   -- viewport space, matches WorldToViewportPoint
+    local p = UserInputService:GetMouseLocation()
+    local i = guiInset()
+    return Vector2.new(p.X - i.X, p.Y - i.Y)
+end
+
+local function aimOrigin()       -- viewport space
+    if Config.Aimbot.Origin == "Center" then
+        local vp = Camera.ViewportSize
+        return Vector2.new(vp.X / 2, vp.Y / 2)
+    end
+    return mouseViewport()
+end
+
+local function toScreen(v) return v + guiInset() end
 
 --=============================== AIMBOT ===================================
 local aimHold, aimToggle = false, false
-local lockedTarget = nil
+local lockedTarget, currentTarget = nil, nil
 
 local function aimPart(plr)
     local char = plr.Character
@@ -155,24 +180,29 @@ local function aimPart(plr)
         or char:FindFirstChild("Torso")
 end
 
+-- Returns the target part only if it is IN FRONT of the camera and INSIDE the FOV
+local function inFov(part, ref, fov)
+    local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+    if not onScreen then return false end
+    if sp.Z <= 0 then return false end          -- <-- the actual fix: behind camera
+    local d = (Vector2.new(sp.X, sp.Y) - ref).Magnitude
+    if d > fov then return false end
+    return true, d
+end
+
 local function closestTarget()
-    local ref = Vector2.new(Mouse.X, Mouse.Y)
+    local ref = aimOrigin()
+    local fov = Config.Aimbot.FOV
     local best, bestScore = nil, math.huge
 
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP and isEnemy(plr) then
-            local char = alive(plr)
-            if char then
-                local part = aimPart(plr)
-                if part then
-                    local sp, on = Camera:WorldToViewportPoint(part.Position)
-                    if on then
-                        local d = (Vector2.new(sp.X, sp.Y) - ref).Magnitude
-                        if d <= Config.Aimbot.FOV and d < bestScore then
-                            if not Config.Aimbot.WallCheck or isVisible(part) then
-                                best, bestScore = plr, d
-                            end
-                        end
+        if plr ~= LP and isEnemy(plr) and alive(plr) then
+            local part = aimPart(plr)
+            if part then
+                local ok, d = inFov(part, ref, fov)
+                if ok and d < bestScore then
+                    if not Config.Aimbot.WallCheck or isVisible(part) then
+                        best, bestScore = plr, d
                     end
                 end
             end
@@ -184,11 +214,14 @@ end
 local function runAimbot(dt)
     local target = lockedTarget
     if target and not alive(target) then target = nil end
+    if target and not Config.Aimbot.LockTarget then target = nil end
 
     if not target then
         target = closestTarget()
         lockedTarget = Config.Aimbot.LockTarget and target or nil
     end
+
+    currentTarget = target
     if not target then return end
 
     local part = aimPart(target)
@@ -207,15 +240,20 @@ local function runAimbot(dt)
 end
 
 --================================ ESP =====================================
-local espObjects = {}
-local espGui     = nil
-local fovCircle  = DRAWING and mkDraw("Circle") or nil
+local espObjects, espGui = {}, nil
+
+local fovCircle = DRAWING and mkDraw("Circle") or nil
 if fovCircle then
-    fovCircle.Thickness    = 1
-    fovCircle.Filled       = false
-    fovCircle.NumSides     = 64
-    fovCircle.Transparency = 0.45
-    fovCircle.Color        = BRAND.ACCENT
+    fovCircle.Thickness, fovCircle.Filled = 1, false
+    fovCircle.NumSides, fovCircle.Transparency = 64, 0.45
+    fovCircle.Color = BRAND.ACCENT
+end
+
+local targetRing = DRAWING and mkDraw("Circle") or nil
+if targetRing then
+    targetRing.Thickness, targetRing.Filled = 2, false
+    targetRing.NumSides, targetRing.Transparency = 40, 0.15
+    targetRing.Color = BRAND.LOCK
 end
 
 local function espColor(plr)
@@ -253,12 +291,8 @@ end
 local function createESP(plr)
     if DRAWING then
         local o = {
-            box    = mkDraw("Square"),
-            name   = mkDraw("Text"),
-            dist   = mkDraw("Text"),
-            tracer = mkDraw("Line"),
-            hbg    = mkDraw("Square"),
-            hfill  = mkDraw("Square"),
+            box = mkDraw("Square"), name = mkDraw("Text"), dist = mkDraw("Text"),
+            tracer = mkDraw("Line"), hbg = mkDraw("Square"), hfill = mkDraw("Square"),
         }
         o.box.Filled, o.box.Thickness = false, 1
         o.hbg.Filled, o.hfill.Filled  = true, true
@@ -270,42 +304,29 @@ local function createESP(plr)
 
     if not espGui then
         espGui = Instance.new("ScreenGui")
-        espGui.Name = "MareaESP"
-        espGui.ResetOnSpawn = false
-        espGui.IgnoreGuiInset = true
+        espGui.Name, espGui.ResetOnSpawn, espGui.IgnoreGuiInset = "MareaESP", false, true
         pcall(function() espGui.Parent = game:GetService("CoreGui") end)
         if not espGui.Parent then espGui.Parent = LP:WaitForChild("PlayerGui") end
     end
-    local char = plr.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    local root = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
     if not root then return nil end
 
     local bb = Instance.new("BillboardGui")
-    bb.Name = "MareaESP"
-    bb.Size = UDim2.new(0, 60, 0, 90)
-    bb.StudsOffset = Vector3.new(0, 3, 0)
-    bb.AlwaysOnTop = true
-    bb.Adornee = root
-    bb.Parent = root
+    bb.Name, bb.Size, bb.AlwaysOnTop = "MareaESP", UDim2.new(0, 60, 0, 90), true
+    bb.StudsOffset, bb.Adornee, bb.Parent = Vector3.new(0, 3, 0), root, root
 
     local box = Instance.new("Frame")
-    box.BackgroundTransparency = 1
-    box.Size = UDim2.fromScale(1, 1)
-    box.Parent = bb
+    box.BackgroundTransparency, box.Size, box.Parent = 1, UDim2.fromScale(1, 1), bb
     local st = Instance.new("UIStroke")
-    st.Thickness = 1.5
-    st.Parent = box
+    st.Thickness, st.Parent = 1.5, box
 
     local label = Instance.new("TextLabel")
-    label.BackgroundTransparency = 1
-    label.Size = UDim2.new(1, 0, 0, 14)
-    label.Position = UDim2.new(0, 0, 0, -16)
-    label.Font = Enum.Font.GothamBold
-    label.TextSize = 12
-    label.TextStrokeTransparency = 0
-    label.Parent = bb
+    label.BackgroundTransparency, label.Size = 1, UDim2.new(1, 0, 0, 14)
+    label.Position, label.Font, label.TextSize = UDim2.new(0, 0, 0, -16), Enum.Font.GothamBold, 12
+    label.TextStrokeTransparency, label.Parent = 0, bb
 
-    return { bb = bb, box = box, stroke = st, label = label, fallback = true }
+    return { bb = bb, stroke = st, label = label, fallback = true }
 end
 
 local function destroyESP(plr)
@@ -327,6 +348,7 @@ local function updateESP()
             end
         end
     end
+
     local dead = {}
     for plr in pairs(espObjects) do
         if not Config.ESP.Enabled or not plr.Parent or not alive(plr) then
@@ -349,10 +371,8 @@ local function updateESP()
                 local h = char:FindFirstChild("MareaHL")
                 if not h then
                     h = Instance.new("Highlight")
-                    h.Name = "MareaHL"
-                    h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    h.FillTransparency = 0.65
-                    h.OutlineTransparency = 0
+                    h.Name, h.DepthMode = "MareaHL", Enum.HighlightDepthMode.AlwaysOnTop
+                    h.FillTransparency, h.OutlineTransparency = 0.65, 0
                     h.Parent = char
                 end
                 h.FillColor, h.OutlineColor = color, color
@@ -378,29 +398,28 @@ local function updateESP()
 
                         o.box.Visible = Config.ESP.Box
                         o.box.Position, o.box.Size, o.box.Color =
-                            Vector2.new(minX, minY), Vector2.new(w, hgt), color
+                            toScreen(Vector2.new(minX, minY)), Vector2.new(w, hgt), color
 
                         o.name.Visible = Config.ESP.Name
-                        o.name.Text, o.name.Size, o.name.Color =
-                            plr.Name, Config.ESP.TextSize, color
-                        o.name.Position = Vector2.new(cx, minY - Config.ESP.TextSize - 4)
+                        o.name.Text, o.name.Size, o.name.Color = plr.Name, Config.ESP.TextSize, color
+                        o.name.Position = toScreen(Vector2.new(cx, minY - Config.ESP.TextSize - 4))
 
                         o.dist.Visible = Config.ESP.Distance
                         o.dist.Text  = string.format("%d m", math.floor(dist))
                         o.dist.Size  = Config.ESP.TextSize - 1
                         o.dist.Color = Color3.fromRGB(235, 235, 245)
-                        o.dist.Position = Vector2.new(cx, maxY + 3)
+                        o.dist.Position = toScreen(Vector2.new(cx, maxY + 3))
 
                         o.tracer.Visible = Config.ESP.Tracer
                         o.tracer.From, o.tracer.To, o.tracer.Color =
-                            Vector2.new(vp.X / 2, vp.Y), Vector2.new(cx, maxY), color
+                            toScreen(Vector2.new(vp.X / 2, vp.Y)), toScreen(Vector2.new(cx, maxY)), color
                         o.tracer.Thickness = 1
 
                         local pct = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
                         o.hbg.Visible, o.hfill.Visible = Config.ESP.Health, Config.ESP.Health
                         o.hbg.Position, o.hbg.Size, o.hbg.Color =
-                            Vector2.new(minX - 6, minY), Vector2.new(3, hgt), Color3.fromRGB(25, 25, 30)
-                        o.hfill.Position = Vector2.new(minX - 6, minY + hgt * (1 - pct))
+                            toScreen(Vector2.new(minX - 6, minY)), Vector2.new(3, hgt), Color3.fromRGB(25, 25, 30)
+                        o.hfill.Position = toScreen(Vector2.new(minX - 6, minY + hgt * (1 - pct)))
                         o.hfill.Size     = Vector2.new(3, hgt * pct)
                         o.hfill.Color    = BRAND.ACCENT:Lerp(BRAND.ENEMY, 1 - pct)
                     else
@@ -412,19 +431,23 @@ local function updateESP()
     end
 end
 
-Players.PlayerRemoving:Connect(function(p) destroyESP(p) end)
+onConn(Players.PlayerRemoving:Connect(function(p) destroyESP(p) end))
 
 --================================= UI =====================================
 local T = {
     BG     = Color3.fromRGB(13, 15, 18),
     PANEL  = Color3.fromRGB(18, 21, 25),
     ELEM   = Color3.fromRGB(28, 32, 38),
+    HOVER  = Color3.fromRGB(36, 41, 48),
     STROKE = Color3.fromRGB(42, 48, 56),
     ACCENT = BRAND.ACCENT,
     GOLD   = BRAND.ACCENT2,
     TEXT   = Color3.fromRGB(233, 238, 242),
     DIM    = Color3.fromRGB(138, 148, 158),
     GOOD   = Color3.fromRGB(60, 200, 120),
+    FONT   = Enum.Font.Gotham,
+    BOLD   = Enum.Font.GothamBold,
+    BLACK  = Enum.Font.GothamBlack,
 }
 
 local function mk(class, props)
@@ -436,6 +459,12 @@ local function corner(o, r) mk("UICorner", { CornerRadius = UDim.new(0, r or 6),
 local function stroke(o, c, t)
     mk("UIStroke", { Color = c or T.STROKE, Thickness = t or 1, Parent = o })
 end
+local function gradient(o, a, b, rot)
+    local g = mk("UIGradient", { Parent = o, Rotation = rot or 0 })
+    g.Color = ColorSequence.new(a, b)
+    return g
+end
+local function spaced(s) return table.concat({ s:gsub(".", "%1 "):gsub(" $", "") }, "") end
 
 local gui = mk("ScreenGui", {
     Name = "Marea", ResetOnSpawn = false,
@@ -444,94 +473,146 @@ local gui = mk("ScreenGui", {
 pcall(function() gui.Parent = game:GetService("CoreGui") end)
 if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
 
+-- Shadow + window
+local shadow = mk("Frame", {
+    Parent = gui, Size = UDim2.new(0, 540, 0, 390), Position = UDim2.new(0, 62, 0, 124),
+    BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.55,
+    BorderSizePixel = 0, ZIndex = 0,
+})
+corner(shadow, 12)
+
 local main = mk("Frame", {
-    Name = "Main", Parent = gui,
-    Size = UDim2.new(0, 520, 0, 360),
-    Position = UDim2.new(0, 60, 0, 120),
-    BackgroundColor3 = T.BG, BorderSizePixel = 0,
+    Name = "Window", Parent = gui, Size = UDim2.new(0, 540, 0, 390),
+    Position = UDim2.new(0, 60, 0, 120), BackgroundColor3 = T.BG,
+    BorderSizePixel = 0, ZIndex = 2,
 })
-corner(main, 10) stroke(main, T.STROKE, 1)
+corner(main, 12) stroke(main, T.STROKE, 1)
 
+--============================= TITLEBAR ===================================
 local titlebar = mk("Frame", {
-    Parent = main, Size = UDim2.new(1, 0, 0, 36),
-    BackgroundColor3 = T.PANEL, BorderSizePixel = 0,
+    Parent = main, Size = UDim2.new(1, 0, 0, 48),
+    BackgroundColor3 = T.PANEL, BorderSizePixel = 0, ZIndex = 3,
 })
-corner(titlebar, 10)
+corner(titlebar, 12)
 mk("Frame", {
-    Parent = titlebar, Size = UDim2.new(1, 0, 0, 12),
-    Position = UDim2.new(0, 0, 1, -12), BackgroundColor3 = T.PANEL, BorderSizePixel = 0,
+    Parent = titlebar, Size = UDim2.new(1, 0, 0, 14),
+    Position = UDim2.new(0, 0, 1, -14), BackgroundColor3 = T.PANEL,
+    BorderSizePixel = 0, ZIndex = 3,
+})
+local divider = mk("Frame", {
+    Parent = titlebar, Size = UDim2.new(1, 0, 0, 1),
+    Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = T.ACCENT,
+    BorderSizePixel = 0, ZIndex = 4,
+})
+gradient(divider, T.ACCENT, T.GOLD, 0)
+
+-- Logo mark
+local mark = mk("Frame", {
+    Parent = titlebar, Size = UDim2.new(0, 30, 0, 30),
+    Position = UDim2.new(0, 14, 0.5, -15), BackgroundColor3 = T.ACCENT,
+    BorderSizePixel = 0, ZIndex = 5,
+})
+corner(mark, 8)
+gradient(mark, BRAND.ACCENT, BRAND.ACCENT2, 45)
+mk("TextLabel", {
+    Parent = mark, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+    Font = T.BLACK, TextSize = 17, TextColor3 = Color3.fromRGB(10, 20, 22),
+    Text = "M", ZIndex = 6,
 })
 
--- Logo + signature
-local logo = mk("TextLabel", {
+-- Wordmark
+local wordmark = mk("TextLabel", {
     Parent = titlebar, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 16, 0, 0), Size = UDim2.new(0, 90, 1, 0),
-    Font = Enum.Font.GothamBlack, TextSize = 16, TextColor3 = T.TEXT,
-    Text = "MAREA", TextXAlignment = Enum.TextXAlignment.Left,
+    Position = UDim2.new(0, 54, 0, 7), Size = UDim2.new(0, 160, 0, 20),
+    Font = T.BLACK, TextSize = 17, TextColor3 = Color3.new(1, 1, 1),
+    Text = spaced("MAREA"), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
 })
-mk("Frame", {
-    Parent = titlebar, Size = UDim2.new(0, 3, 0, 16),
-    Position = UDim2.new(0, 10, 0.5, -8), BackgroundColor3 = T.ACCENT, BorderSizePixel = 0,
-})
-corner(titlebar:FindFirstChildOfClass("Frame") or logo, 2)
-
-local pill = mk("TextLabel", {
-    Parent = titlebar, BackgroundColor3 = T.ELEM,
-    Position = UDim2.new(0, 92, 0.5, -8), Size = UDim2.new(0, 44, 0, 16),
-    Font = Enum.Font.GothamBold, TextSize = 10, TextColor3 = T.ACCENT,
-    Text = "v" .. META.Version, BorderSizePixel = 0,
-})
-corner(pill, 4)
+local wmGrad = gradient(wordmark, BRAND.ACCENT, BRAND.ACCENT2, 0)
+TweenService:Create(wmGrad, TweenInfo.new(3.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+    { Offset = Vector2.new(0.6, 0) }):Play()
 
 mk("TextLabel", {
     Parent = titlebar, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 142, 0, 0), Size = UDim2.new(0, 220, 1, 0),
-    Font = Enum.Font.Gotham, TextSize = 11, TextColor3 = T.DIM,
-    Text = META.Tagline, TextXAlignment = Enum.TextXAlignment.Left,
+    Position = UDim2.new(0, 55, 0, 27), Size = UDim2.new(0, 220, 0, 12),
+    Font = T.BOLD, TextSize = 8, TextColor3 = T.DIM,
+    Text = spaced(META.Tagline), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
 })
+
+local pill = mk("TextLabel", {
+    Parent = titlebar, BackgroundColor3 = T.ELEM,
+    Position = UDim2.new(1, -122, 0.5, -8), Size = UDim2.new(0, 46, 0, 16),
+    Font = T.BOLD, TextSize = 10, TextColor3 = T.ACCENT,
+    Text = "v" .. META.Version, BorderSizePixel = 0, ZIndex = 5,
+})
+corner(pill, 4)
 
 local minimize = mk("TextButton", {
-    Parent = titlebar, Size = UDim2.new(0, 22, 0, 22),
-    Position = UDim2.new(1, -30, 0.5, -11), BackgroundColor3 = T.ELEM,
-    Font = Enum.Font.GothamBold, TextSize = 13, TextColor3 = T.TEXT,
-    Text = "—", AutoButtonColor = false,
+    Parent = titlebar, Size = UDim2.new(0, 24, 0, 24),
+    Position = UDim2.new(1, -32, 0.5, -12), BackgroundColor3 = T.ELEM,
+    Font = T.BOLD, TextSize = 13, TextColor3 = T.TEXT, Text = "—",
+    AutoButtonColor = false, ZIndex = 5,
 })
-corner(minimize, 5)
+corner(minimize, 6)
 
+--============================= LAYOUT =====================================
 local sidebar = mk("Frame", {
-    Parent = main, Position = UDim2.new(0, 8, 0, 44),
-    Size = UDim2.new(0, 118, 1, -52), BackgroundTransparency = 1,
+    Parent = main, Position = UDim2.new(0, 10, 0, 58),
+    Size = UDim2.new(0, 122, 1, -96), BackgroundTransparency = 1, ZIndex = 3,
 })
 local content = mk("Frame", {
-    Parent = main, Position = UDim2.new(0, 134, 0, 44),
-    Size = UDim2.new(1, -142, 1, -52), BackgroundTransparency = 1,
+    Parent = main, Position = UDim2.new(0, 142, 0, 58),
+    Size = UDim2.new(1, -152, 1, -96), BackgroundTransparency = 1, ZIndex = 3,
 })
 
 local tabs, pages = {}, {}
-local order = { "Aimbot", "ESP", "Joueurs", "Divers" }
+local order = { "Aimbot", "ESP", "Players", "Misc" }
 local currentTab
 
 local function selectTab(name)
     currentTab = name
     for n, p in pairs(pages) do p.Visible = (n == name) end
-    for n, b in pairs(tabs) do
-        b.BackgroundColor3 = (n == name) and T.ACCENT or T.ELEM
-        b.TextColor3 = (n == name) and Color3.fromRGB(10, 20, 22) or T.DIM
+    for n, d in pairs(tabs) do
+        d.holder.BackgroundColor3 = (n == name) and T.ACCENT or T.ELEM
+        d.label.TextColor3 = (n == name) and Color3.fromRGB(10, 20, 22) or T.DIM
+        d.bar.Visible = (n == name)
     end
 end
 
 for i, name in ipairs(order) do
-    local b = mk("TextButton", {
-        Parent = sidebar, Size = UDim2.new(1, 0, 0, 30),
-        Position = UDim2.new(0, 0, 0, (i - 1) * 34),
-        BackgroundColor3 = T.ELEM, Font = Enum.Font.GothamBold, TextSize = 12,
-        TextColor3 = T.DIM, Text = name, AutoButtonColor = false,
-        TextXAlignment = Enum.TextXAlignment.Left,
+    local holder = mk("Frame", {
+        Parent = sidebar, Size = UDim2.new(1, 0, 0, 32),
+        Position = UDim2.new(0, 0, 0, (i - 1) * 36),
+        BackgroundColor3 = T.ELEM, BorderSizePixel = 0,
     })
-    mk("UIPadding", { PaddingLeft = UDim.new(0, 10), Parent = b })
-    corner(b, 6)
-    b.MouseButton1Click:Connect(function() selectTab(name) end)
-    tabs[name] = b
+    corner(holder, 6)
+
+    local bar = mk("Frame", {
+        Parent = holder, Size = UDim2.new(0, 3, 0, 16),
+        Position = UDim2.new(0, 0, 0.5, -8),
+        BackgroundColor3 = Color3.fromRGB(10, 20, 22), BorderSizePixel = 0, Visible = false,
+    })
+    corner(bar, 2)
+
+    local label = mk("TextLabel", {
+        Parent = holder, BackgroundTransparency = 1, Size = UDim2.new(1, -14, 1, 0),
+        Position = UDim2.new(0, 14, 0, 0), Font = T.BOLD, TextSize = 12,
+        TextColor3 = T.DIM, Text = name, TextXAlignment = Enum.TextXAlignment.Left,
+    })
+
+    local btn = mk("TextButton", {
+        Parent = holder, Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1,
+        Text = "", AutoButtonColor = false,
+    })
+
+    btn.MouseButton1Click:Connect(function() selectTab(name) end)
+    holder.MouseEnter:Connect(function()
+        if currentTab ~= name then holder.BackgroundColor3 = T.HOVER end
+    end)
+    holder.MouseLeave:Connect(function()
+        if currentTab ~= name then holder.BackgroundColor3 = T.ELEM end
+    end)
+
+    tabs[name] = { holder = holder, label = label, bar = bar }
 
     local page = mk("ScrollingFrame", {
         Parent = content, Size = UDim2.new(1, 0, 1, 0),
@@ -545,28 +626,51 @@ for i, name in ipairs(order) do
     pages[name] = page
 end
 
--- Signature en bas de la sidebar
 local sig = mk("Frame", {
-    Parent = sidebar, Size = UDim2.new(1, 0, 0, 34),
-    Position = UDim2.new(0, 0, 1, -34), BackgroundTransparency = 1,
+    Parent = sidebar, Size = UDim2.new(1, 0, 0, 30),
+    Position = UDim2.new(0, 2, 1, -30), BackgroundTransparency = 1,
 })
 mk("TextLabel", {
     Parent = sig, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 14),
-    Font = Enum.Font.GothamBlack, TextSize = 11, TextColor3 = T.GOLD,
-    Text = "MAREA v" .. META.Version, TextXAlignment = Enum.TextXAlignment.Left,
+    Font = T.BLACK, TextSize = 10, TextColor3 = T.GOLD,
+    Text = "MAREA  v" .. META.Version, TextXAlignment = Enum.TextXAlignment.Left,
 })
 mk("TextLabel", {
     Parent = sig, BackgroundTransparency = 1, Position = UDim2.new(0, 0, 0, 14),
-    Size = UDim2.new(1, 0, 0, 14), Font = Enum.Font.Gotham, TextSize = 10,
-    TextColor3 = T.DIM, Text = META.Tagline, TextXAlignment = Enum.TextXAlignment.Left,
+    Size = UDim2.new(1, 0, 0, 14), Font = T.FONT, TextSize = 9,
+    TextColor3 = T.DIM, Text = spaced("ADRIATIC"), TextXAlignment = Enum.TextXAlignment.Left,
 })
 
---============================= COMPOSANTS =================================
+--============================= STATUS BAR =================================
+local statusBar = mk("Frame", {
+    Parent = main, Size = UDim2.new(1, -20, 0, 24),
+    Position = UDim2.new(0, 10, 1, -30), BackgroundColor3 = T.PANEL,
+    BorderSizePixel = 0, ZIndex = 3,
+})
+corner(statusBar, 6)
+mk("Frame", {
+    Parent = statusBar, Size = UDim2.new(0, 3, 0, 12),
+    Position = UDim2.new(0, 8, 0.5, -6), BackgroundColor3 = T.ACCENT, BorderSizePixel = 0,
+})
+corner(statusBar:FindFirstChildOfClass("Frame"), 2)
+
+local statusTarget = mk("TextLabel", {
+    Parent = statusBar, BackgroundTransparency = 1, Size = UDim2.new(0.6, 0, 1, 0),
+    Position = UDim2.new(0, 18, 0, 0), Font = T.BOLD, TextSize = 10,
+    TextColor3 = T.DIM, Text = "TARGET  —", TextXAlignment = Enum.TextXAlignment.Left,
+})
+local statusFps = mk("TextLabel", {
+    Parent = statusBar, BackgroundTransparency = 1, Size = UDim2.new(0.3, 0, 1, 0),
+    Position = UDim2.new(0.7, 0, 0, 0), Font = T.BOLD, TextSize = 10,
+    TextColor3 = T.ACCENT, Text = "60 FPS", TextXAlignment = Enum.TextXAlignment.Right,
+})
+
+--============================= COMPONENTS =================================
 local function section(parent, text)
     local f = mk("Frame", { Parent = parent, Size = UDim2.new(1, -4, 0, 24), BackgroundTransparency = 1 })
     mk("TextLabel", {
         Parent = f, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
-        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = T.ACCENT,
+        Font = T.BOLD, TextSize = 12, TextColor3 = T.ACCENT,
         Text = string.upper(text), TextXAlignment = Enum.TextXAlignment.Left,
     })
     return f
@@ -576,7 +680,7 @@ local function toggle(parent, text, default, cb)
     local row = mk("Frame", { Parent = parent, Size = UDim2.new(1, -4, 0, 26), BackgroundTransparency = 1 })
     mk("TextLabel", {
         Parent = row, BackgroundTransparency = 1, Size = UDim2.new(1, -50, 1, 0),
-        Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.TEXT,
+        Font = T.FONT, TextSize = 13, TextColor3 = T.TEXT,
         Text = text, TextXAlignment = Enum.TextXAlignment.Left,
     })
     local box = mk("TextButton", {
@@ -591,28 +695,33 @@ local function toggle(parent, text, default, cb)
     corner(knob, 7)
 
     local state = default
-    local function render()
+    local function render(anim)
+        local goalPos = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+        if anim then
+            TweenService:Create(knob, TweenInfo.new(0.14, Enum.EasingStyle.Quad), { Position = goalPos }):Play()
+        else
+            knob.Position = goalPos
+        end
         box.BackgroundColor3 = state and T.ACCENT or T.ELEM
-        knob.Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
         knob.BackgroundColor3 = state and Color3.fromRGB(10, 20, 22) or T.DIM
     end
     box.MouseButton1Click:Connect(function()
-        state = not state; render(); cb(state)
+        state = not state; render(true); cb(state)
     end)
-    render()
-    return { Set = function(v) state = v; render(); cb(v) end, Get = function() return state end }
+    render(false)
+    return { Set = function(v) state = v; render(true); cb(v) end, Get = function() return state end }
 end
 
 local function slider(parent, text, min, max, default, cb)
     local row = mk("Frame", { Parent = parent, Size = UDim2.new(1, -4, 0, 38), BackgroundTransparency = 1 })
     mk("TextLabel", {
         Parent = row, BackgroundTransparency = 1, Size = UDim2.new(0.7, 0, 0, 16),
-        Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.TEXT,
+        Font = T.FONT, TextSize = 13, TextColor3 = T.TEXT,
         Text = text, TextXAlignment = Enum.TextXAlignment.Left,
     })
     local value = mk("TextLabel", {
         Parent = row, BackgroundTransparency = 1, Size = UDim2.new(0.3, 0, 0, 16),
-        Position = UDim2.new(0.7, 0, 0, 0), Font = Enum.Font.GothamBold, TextSize = 12,
+        Position = UDim2.new(0.7, 0, 0, 0), Font = T.BOLD, TextSize = 12,
         TextColor3 = T.ACCENT, Text = tostring(default), TextXAlignment = Enum.TextXAlignment.Right,
     })
     local bar = mk("TextButton", {
@@ -622,9 +731,9 @@ local function slider(parent, text, min, max, default, cb)
     corner(bar, 4)
     local fill = mk("Frame", { Parent = bar, Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = T.ACCENT, BorderSizePixel = 0 })
     corner(fill, 4)
+    gradient(fill, BRAND.ACCENT, BRAND.ACCENT2, 0)
 
-    local dragging = false
-    local val = default
+    local dragging, val = false, default
     local function set(v, fire)
         val = math.clamp(v, min, max)
         fill.Size = UDim2.new((val - min) / (max - min), 0, 1, 0)
@@ -652,12 +761,12 @@ local function keybind(parent, text, default, cb)
     local row = mk("Frame", { Parent = parent, Size = UDim2.new(1, -4, 0, 26), BackgroundTransparency = 1 })
     mk("TextLabel", {
         Parent = row, BackgroundTransparency = 1, Size = UDim2.new(1, -80, 1, 0),
-        Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.TEXT,
+        Font = T.FONT, TextSize = 13, TextColor3 = T.TEXT,
         Text = text, TextXAlignment = Enum.TextXAlignment.Left,
     })
     local btn = mk("TextButton", {
         Parent = row, Size = UDim2.new(0, 70, 0, 22), Position = UDim2.new(1, -70, 0.5, -11),
-        BackgroundColor3 = T.ELEM, Font = Enum.Font.GothamBold, TextSize = 11,
+        BackgroundColor3 = T.ELEM, Font = T.BOLD, TextSize = 11,
         TextColor3 = T.TEXT, Text = default and default.Name or "—", AutoButtonColor = false,
     })
     corner(btn, 5)
@@ -665,9 +774,7 @@ local function keybind(parent, text, default, cb)
 
     btn.MouseButton1Click:Connect(function()
         if listening then return end
-        listening = true
-        btn.Text = "..."
-        btn.BackgroundColor3 = T.ACCENT
+        listening, btn.Text, btn.BackgroundColor3 = true, "...", T.ACCENT
         local c
         c = UserInputService.InputBegan:Connect(function(input, gpe)
             if input.UserInputType == Enum.UserInputType.MouseMovement or gpe then return end
@@ -688,12 +795,12 @@ local function dropdown(parent, text, options, default, cb)
     local row = mk("Frame", { Parent = parent, Size = UDim2.new(1, -4, 0, 26), BackgroundTransparency = 1 })
     mk("TextLabel", {
         Parent = row, BackgroundTransparency = 1, Size = UDim2.new(1, -90, 1, 0),
-        Font = Enum.Font.Gotham, TextSize = 13, TextColor3 = T.TEXT,
+        Font = T.FONT, TextSize = 13, TextColor3 = T.TEXT,
         Text = text, TextXAlignment = Enum.TextXAlignment.Left,
     })
     local btn = mk("TextButton", {
         Parent = row, Size = UDim2.new(0, 80, 0, 22), Position = UDim2.new(1, -80, 0.5, -11),
-        BackgroundColor3 = T.ELEM, Font = Enum.Font.GothamBold, TextSize = 11,
+        BackgroundColor3 = T.ELEM, Font = T.BOLD, TextSize = 11,
         TextColor3 = T.TEXT, Text = default, AutoButtonColor = false,
     })
     corner(btn, 5)
@@ -710,53 +817,54 @@ end
 local function button(parent, text, cb)
     local b = mk("TextButton", {
         Parent = parent, Size = UDim2.new(1, -4, 0, 26), BackgroundColor3 = T.ELEM,
-        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = T.TEXT,
-        Text = text, AutoButtonColor = false,
+        Font = T.BOLD, TextSize = 12, TextColor3 = T.TEXT, Text = text, AutoButtonColor = false,
     })
     corner(b, 6)
     b.MouseButton1Click:Connect(cb)
     return b
 end
 
---============================= PAGE AIMBOT ================================
+--============================= AIMBOT PAGE ================================
 local pAim = pages["Aimbot"]
-section(pAim, "Général")
-toggle(pAim, "Activer l'aimbot", Config.Aimbot.Enabled, function(v) Config.Aimbot.Enabled = v end)
-dropdown(pAim, "Mode", { "Hold", "Toggle" }, Config.Aimbot.Mode, function(v) Config.Aimbot.Mode = v end)
-keybind(pAim, "Touche d'aim", Config.Aimbot.Key, function(k) Config.Aimbot.Key = k end)
+section(pAim, "General")
+toggle(pAim, "Enable aimbot", Config.Aimbot.Enabled, function(v) Config.Aimbot.Enabled = v end)
+dropdown(pAim, "Activation mode", { "Hold", "Toggle" }, Config.Aimbot.Mode, function(v) Config.Aimbot.Mode = v end)
+keybind(pAim, "Aim key", Config.Aimbot.Key, function(k) Config.Aimbot.Key = k end)
+dropdown(pAim, "FOV origin", { "Mouse", "Center" }, Config.Aimbot.Origin, function(v) Config.Aimbot.Origin = v end)
 
-section(pAim, "Réglages")
-slider(pAim, "FOV", 10, 500, Config.Aimbot.FOV, function(v) Config.Aimbot.FOV = v end)
-slider(pAim, "Lissage", 0.02, 1, Config.Aimbot.Smoothness, function(v) Config.Aimbot.Smoothness = v end)
-slider(pAim, "Prédiction", 0, 0.4, Config.Aimbot.Prediction, function(v) Config.Aimbot.Prediction = v end)
+section(pAim, "Tuning")
+slider(pAim, "FOV radius", 10, 500, Config.Aimbot.FOV, function(v) Config.Aimbot.FOV = v end)
+slider(pAim, "Smoothing", 0.02, 1, Config.Aimbot.Smoothness, function(v) Config.Aimbot.Smoothness = v end)
+slider(pAim, "Velocity prediction", 0, 0.4, Config.Aimbot.Prediction, function(v) Config.Aimbot.Prediction = v end)
 dropdown(pAim, "Hitbox", { "Head", "HumanoidRootPart", "UpperTorso" }, Config.Aimbot.Hitbox, function(v) Config.Aimbot.Hitbox = v end)
 
-section(pAim, "Filtres")
-toggle(pAim, "Vérif. équipe", Config.Aimbot.TeamCheck, function(v) Config.Aimbot.TeamCheck = v end)
-toggle(pAim, "Vérif. murs", Config.Aimbot.WallCheck, function(v) Config.Aimbot.WallCheck = v end)
-toggle(pAim, "Verrouiller la cible", Config.Aimbot.LockTarget, function(v) Config.Aimbot.LockTarget = v end)
-toggle(pAim, "Afficher le cercle FOV", Config.Aimbot.ShowFOV, function(v) Config.Aimbot.ShowFOV = v end)
+section(pAim, "Filters")
+toggle(pAim, "Team check", Config.Aimbot.TeamCheck, function(v) Config.Aimbot.TeamCheck = v end)
+toggle(pAim, "Wall check", Config.Aimbot.WallCheck, function(v) Config.Aimbot.WallCheck = v end)
+toggle(pAim, "Lock target", Config.Aimbot.LockTarget, function(v) Config.Aimbot.LockTarget = v end)
+toggle(pAim, "Show FOV circle", Config.Aimbot.ShowFOV, function(v) Config.Aimbot.ShowFOV = v end)
 
---============================== PAGE ESP ==================================
+--=============================== ESP PAGE =================================
 local pEsp = pages["ESP"]
-section(pEsp, "Général")
-toggle(pEsp, "Activer l'ESP", Config.ESP.Enabled, function(v) Config.ESP.Enabled = v end)
-slider(pEsp, "Distance max", 50, 5000, Config.ESP.MaxDist, function(v) Config.ESP.MaxDist = v end)
-slider(pEsp, "Taille du texte", 8, 22, Config.ESP.TextSize, function(v) Config.ESP.TextSize = v end)
+section(pEsp, "General")
+toggle(pEsp, "Enable ESP", Config.ESP.Enabled, function(v) Config.ESP.Enabled = v end)
+slider(pEsp, "Max distance", 50, 5000, Config.ESP.MaxDist, function(v) Config.ESP.MaxDist = v end)
+slider(pEsp, "Text size", 8, 22, Config.ESP.TextSize, function(v) Config.ESP.TextSize = v end)
 
-section(pEsp, "Éléments")
-toggle(pEsp, "Boîtes", Config.ESP.Box, function(v) Config.ESP.Box = v end)
-toggle(pEsp, "Pseudo", Config.ESP.Name, function(v) Config.ESP.Name = v end)
-toggle(pEsp, "Barre de vie", Config.ESP.Health, function(v) Config.ESP.Health = v end)
+section(pEsp, "Elements")
+toggle(pEsp, "Boxes", Config.ESP.Box, function(v) Config.ESP.Box = v end)
+toggle(pEsp, "Names", Config.ESP.Name, function(v) Config.ESP.Name = v end)
+toggle(pEsp, "Health bars", Config.ESP.Health, function(v) Config.ESP.Health = v end)
 toggle(pEsp, "Distance", Config.ESP.Distance, function(v) Config.ESP.Distance = v end)
-toggle(pEsp, "Traits (tracers)", Config.ESP.Tracer, function(v) Config.ESP.Tracer = v end)
-toggle(pEsp, "Chams (surbrillance)", Config.ESP.Chams, function(v) Config.ESP.Chams = v end)
+toggle(pEsp, "Tracers", Config.ESP.Tracer, function(v) Config.ESP.Tracer = v end)
+toggle(pEsp, "Chams", Config.ESP.Chams, function(v) Config.ESP.Chams = v end)
+toggle(pEsp, "Target ring", Config.ESP.TargetRing, function(v) Config.ESP.TargetRing = v end)
 
-section(pEsp, "Filtres")
-toggle(pEsp, "Couleur d'équipe", Config.ESP.TeamCheck, function(v) Config.ESP.TeamCheck = v end)
+section(pEsp, "Filters")
+toggle(pEsp, "Team colors", Config.ESP.TeamCheck, function(v) Config.ESP.TeamCheck = v end)
 
---============================ PAGE JOUEURS ================================
-local pPlr = pages["Joueurs"]
+--============================= PLAYERS PAGE ===============================
+local pPlr = pages["Players"]
 local plrList = mk("Frame", { Parent = pPlr, Size = UDim2.new(1, -4, 0, 10), BackgroundTransparency = 1 })
 mk("UIListLayout", { Parent = plrList, Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder })
 
@@ -771,23 +879,25 @@ local function refreshPlayers()
         })
         corner(row, 5)
         local _, hum = alive(plr)
+
         mk("TextLabel", {
             Parent = row, BackgroundTransparency = 1, Size = UDim2.new(0.5, -8, 1, 0),
-            Position = UDim2.new(0, 8, 0, 0), Font = Enum.Font.Gotham, TextSize = 12,
+            Position = UDim2.new(0, 8, 0, 0), Font = T.FONT, TextSize = 12,
             TextColor3 = (plr == LP) and T.ACCENT or T.TEXT,
-            Text = plr.Name .. (plr == LP and " (moi)" or ""),
+            Text = plr.Name .. (plr == LP and "  (you)" or ""),
             TextXAlignment = Enum.TextXAlignment.Left,
         })
         mk("TextLabel", {
             Parent = row, BackgroundTransparency = 1, Size = UDim2.new(0, 60, 1, 0),
-            Position = UDim2.new(0.5, 0, 0, 0), Font = Enum.Font.GothamBold, TextSize = 12,
+            Position = UDim2.new(0.5, 0, 0, 0), Font = T.BOLD, TextSize = 12,
             TextColor3 = hum and T.GOOD or T.DIM,
-            Text = hum and (math.floor(hum.Health) .. " HP") or "mort",
+            Text = hum and (math.floor(hum.Health) .. " HP") or "dead",
             TextXAlignment = Enum.TextXAlignment.Left,
         })
+
         local spec = mk("TextButton", {
             Parent = row, Size = UDim2.new(0, 50, 0, 20), Position = UDim2.new(1, -112, 0.5, -10),
-            BackgroundColor3 = T.ELEM, Font = Enum.Font.GothamBold, TextSize = 11,
+            BackgroundColor3 = T.ELEM, Font = T.BOLD, TextSize = 11,
             TextColor3 = T.TEXT, Text = "Spec", AutoButtonColor = false,
         })
         corner(spec, 4)
@@ -795,14 +905,15 @@ local function refreshPlayers()
             local _, h = alive(plr)
             if h then Camera.CameraSubject = h end
         end)
+
         local tp = mk("TextButton", {
             Parent = row, Size = UDim2.new(0, 50, 0, 20), Position = UDim2.new(1, -56, 0.5, -10),
-            BackgroundColor3 = T.ELEM, Font = Enum.Font.GothamBold, TextSize = 11,
+            BackgroundColor3 = T.ELEM, Font = T.BOLD, TextSize = 11,
             TextColor3 = T.TEXT, Text = "TP", AutoButtonColor = false,
         })
         corner(tp, 4)
         tp.MouseButton1Click:Connect(function()
-            local _, _, r = alive(plr)
+            local _, _, r  = alive(plr)
             local _, _, mr = alive(LP)
             if r and mr then mr.CFrame = r.CFrame * CFrame.new(0, 0, 3) end
         end)
@@ -810,14 +921,14 @@ local function refreshPlayers()
     plrList.Size = UDim2.new(1, -4, 0, math.max(10, #Players:GetPlayers() * 32))
 end
 
-button(pPlr, "Rafraîchir la liste", refreshPlayers)
+button(pPlr, "Refresh list", refreshPlayers)
 refreshPlayers()
 onConn(Players.PlayerAdded:Connect(function() task.wait(0.3); refreshPlayers() end))
 onConn(Players.PlayerRemoving:Connect(function() task.wait(0.1); refreshPlayers() end))
 
---============================= PAGE DIVERS ================================
-local pMisc = pages["Divers"]
-section(pMisc, "Visuel")
+--=============================== MISC PAGE ================================
+local pMisc = pages["Misc"]
+section(pMisc, "Visuals")
 toggle(pMisc, "Fullbright", Config.Misc.Fullbright, function(v)
     Config.Misc.Fullbright = v
     local l = game:GetService("Lighting")
@@ -828,40 +939,38 @@ toggle(pMisc, "Fullbright", Config.Misc.Fullbright, function(v)
     end
 end)
 toggle(pMisc, "Watermark", Config.Misc.Watermark, function(v) Config.Misc.Watermark = v end)
+toggle(pMisc, "Status bar", Config.Misc.StatusBar, function(v)
+    Config.Misc.StatusBar = v
+    statusBar.Visible = v
+end)
 
 section(pMisc, "Interface")
-keybind(pMisc, "Touche du menu", Config.Misc.MenuKey, function(k) Config.Misc.MenuKey = k end)
+keybind(pMisc, "Menu key", Config.Misc.MenuKey, function(k) Config.Misc.MenuKey = k end)
 
 section(pMisc, "Actions")
-button(pMisc, "Reset du personnage", function()
+button(pMisc, "Reset character", function()
     local c = LP.Character
     if c then local h = c:FindFirstChildOfClass("Humanoid"); if h then h.Health = 0 end end
 end)
-button(pMisc, "Décharger " .. META.Name, function()
+button(pMisc, "Unload " .. META.Name, function()
     if getgenv().Marea then getgenv().Marea.Unload() end
 end)
 
 --============================= WATERMARK ==================================
-local wm = mk("TextLabel", {
-    Parent = gui, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 14, 1, -32), Size = UDim2.new(0, 300, 0, 20),
-    Font = Enum.Font.GothamBlack, TextSize = 14, TextColor3 = T.TEXT,
-    Text = "MAREA", TextXAlignment = Enum.TextXAlignment.Left,
-    TextStrokeTransparency = 0.6, TextStrokeColor3 = Color3.new(0, 0, 0),
+local wmMark = mk("TextLabel", {
+    Parent = gui, BackgroundTransparency = 1, Position = UDim2.new(0, 14, 1, -34),
+    Size = UDim2.new(0, 300, 0, 20), Font = T.BLACK, TextSize = 15,
+    TextColor3 = Color3.new(1, 1, 1), Text = spaced("MAREA"),
+    TextXAlignment = Enum.TextXAlignment.Left, TextStrokeTransparency = 0.6,
+    TextStrokeColor3 = Color3.new(0, 0, 0),
 })
+gradient(wmMark, BRAND.ACCENT, BRAND.ACCENT2, 0)
 mk("TextLabel", {
-    Parent = gui, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 68, 1, -30), Size = UDim2.new(0, 300, 0, 20),
-    Font = Enum.Font.GothamBold, TextSize = 11, TextColor3 = T.ACCENT,
-    Text = "v" .. META.Version, TextXAlignment = Enum.TextXAlignment.Left,
-    TextStrokeTransparency = 0.7, TextStrokeColor3 = Color3.new(0, 0, 0),
-})
-mk("TextLabel", {
-    Parent = gui, BackgroundTransparency = 1,
-    Position = UDim2.new(0, 14, 1, -17), Size = UDim2.new(0, 300, 0, 20),
-    Font = Enum.Font.Gotham, TextSize = 10, TextColor3 = T.DIM,
-    Text = META.Tagline, TextXAlignment = Enum.TextXAlignment.Left,
-    TextStrokeTransparency = 0.8, TextStrokeColor3 = Color3.new(0, 0, 0),
+    Parent = gui, BackgroundTransparency = 1, Position = UDim2.new(0, 14, 1, -17),
+    Size = UDim2.new(0, 300, 0, 20), Font = T.FONT, TextSize = 10,
+    TextColor3 = T.DIM, Text = spaced(META.Tagline),
+    TextXAlignment = Enum.TextXAlignment.Left, TextStrokeTransparency = 0.8,
+    TextStrokeColor3 = Color3.new(0, 0, 0),
 })
 
 --========================= DRAG & MINIMIZE ================================
@@ -875,6 +984,7 @@ onConn(UserInputService.InputChanged:Connect(function(i)
     if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
         local d = i.Position - dragStart
         main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        shadow.Position = main.Position + UDim2.new(0, 2, 0, 4)
     end
 end))
 onConn(UserInputService.InputEnded:Connect(function(i)
@@ -884,10 +994,11 @@ end))
 local minimized = false
 minimize.MouseButton1Click:Connect(function()
     minimized = not minimized
-    local target = minimized and UDim2.new(0, 520, 0, 36) or UDim2.new(0, 520, 0, 360)
-    sidebar.Visible = not minimized
-    content.Visible = not minimized
-    TweenService:Create(main, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Size = target }):Play()
+    sidebar.Visible, content.Visible = not minimized, not minimized
+    statusBar.Visible = (not minimized) and Config.Misc.StatusBar
+    local goal = minimized and UDim2.new(0, 540, 0, 48) or UDim2.new(0, 540, 0, 390)
+    TweenService:Create(main, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Size = goal }):Play()
+    TweenService:Create(shadow, TweenInfo.new(0.18, Enum.EasingStyle.Quad), { Size = goal }):Play()
     minimize.Text = minimized and "+" or "—"
 end)
 
@@ -895,31 +1006,40 @@ selectTab("Aimbot")
 
 --============================ NOTIFICATIONS ===============================
 local function notify(text, color)
-    local n = mk("TextLabel", {
-        Parent = gui, Size = UDim2.new(0, 240, 0, 30),
-        Position = UDim2.new(1, -260, 1, -50), BackgroundColor3 = T.PANEL,
-        Font = Enum.Font.GothamBold, TextSize = 12, TextColor3 = color or T.TEXT,
-        Text = text, BorderSizePixel = 0, TextTransparency = 1, BackgroundTransparency = 1,
+    local n = mk("Frame", {
+        Parent = gui, Size = UDim2.new(0, 250, 0, 32),
+        Position = UDim2.new(1, -270, 1, -50), BackgroundColor3 = T.PANEL,
+        BorderSizePixel = 0, BackgroundTransparency = 1,
     })
-    corner(n, 6) stroke(n, color or T.STROKE, 1)
+    corner(n, 7) stroke(n, color or T.STROKE, 1)
+    mk("Frame", {
+        Parent = n, Size = UDim2.new(0, 3, 0, 18), Position = UDim2.new(0, 6, 0.5, -9),
+        BackgroundColor3 = color or T.ACCENT, BorderSizePixel = 0,
+    })
+    local lbl = mk("TextLabel", {
+        Parent = n, BackgroundTransparency = 1, Size = UDim2.new(1, -22, 1, 0),
+        Position = UDim2.new(0, 16, 0, 0), Font = T.BOLD, TextSize = 12,
+        TextColor3 = color or T.TEXT, Text = text, TextTransparency = 1,
+        TextXAlignment = Enum.TextXAlignment.Left,
+    })
     TweenService:Create(n, TweenInfo.new(0.2), {
-        TextTransparency = 0, BackgroundTransparency = 0,
-        Position = UDim2.new(1, -260, 1, -60),
+        BackgroundTransparency = 0, Position = UDim2.new(1, -270, 1, -62),
     }):Play()
+    TweenService:Create(lbl, TweenInfo.new(0.2), { TextTransparency = 0 }):Play()
     task.delay(2.2, function()
         TweenService:Create(n, TweenInfo.new(0.25), {
-            TextTransparency = 1, BackgroundTransparency = 1,
-            Position = UDim2.new(1, -260, 1, -50),
+            BackgroundTransparency = 1, Position = UDim2.new(1, -270, 1, -50),
         }):Play()
+        TweenService:Create(lbl, TweenInfo.new(0.25), { TextTransparency = 1 }):Play()
         task.wait(0.3)
         n:Destroy()
     end)
 end
 
---============================= TOUCHES ====================================
+--=============================== INPUT ====================================
 onConn(UserInputService.InputBegan:Connect(function(input, gpe)
     if keyMatches(input, Config.Misc.MenuKey) then
-        main.Visible = not main.Visible
+        main.Visible, shadow.Visible = not main.Visible, not shadow.Visible
         return
     end
     if gpe then return end
@@ -939,26 +1059,63 @@ onConn(UserInputService.InputEnded:Connect(function(input)
     end
 end))
 
---============================= BOUCLE =====================================
+--=============================== LOOP =====================================
+local fps, fpsAcc, fpsFrames = 60, 0, 0
+
 onConn(RunService.RenderStepped:Connect(function(dt)
+    fpsAcc, fpsFrames = fpsAcc + dt, fpsFrames + 1
+    if fpsAcc >= 0.4 then
+        fps = math.floor(fpsFrames / fpsAcc)
+        fpsAcc, fpsFrames = 0, 0
+        statusFps.Text = fps .. " FPS"
+    end
+
     local aiming = Config.Aimbot.Enabled and (aimHold or aimToggle)
     if aiming then
         runAimbot(dt)
-    elseif not Config.Aimbot.LockTarget then
-        lockedTarget = nil
+    else
+        currentTarget = nil
+        if not Config.Aimbot.LockTarget then lockedTarget = nil end
     end
 
     if fovCircle then
         fovCircle.Visible = Config.Aimbot.Enabled and Config.Aimbot.ShowFOV
-        fovCircle.Position = Vector2.new(Mouse.X, Mouse.Y)
+        local ref = aimOrigin()
+        fovCircle.Position = toScreen(ref)
         fovCircle.Radius = Config.Aimbot.FOV
+        fovCircle.Color = (aiming and currentTarget) and BRAND.LOCK or BRAND.ACCENT
     end
 
-    wm.Visible = Config.Misc.Watermark
+    if targetRing then
+        local show = Config.ESP.TargetRing and aiming and currentTarget
+        targetRing.Visible = show and true or false
+        if show then
+            local part = aimPart(currentTarget)
+            if part then
+                local sp, on = Camera:WorldToViewportPoint(part.Position)
+                if on and sp.Z > 0 then
+                    targetRing.Position = toScreen(Vector2.new(sp.X, sp.Y))
+                    targetRing.Radius = math.clamp(900 / sp.Z, 5, 70)
+                    targetRing.Color = BRAND.LOCK
+                else
+                    targetRing.Visible = false
+                end
+            end
+        end
+    end
+
+    if Config.Misc.StatusBar then
+        statusTarget.Text = currentTarget
+            and ("TARGET  " .. currentTarget.Name:upper())
+            or "TARGET  —"
+        statusTarget.TextColor3 = currentTarget and BRAND.LOCK or T.DIM
+    end
+
+    wmMark.Visible = Config.Misc.Watermark
     updateESP()
 end))
 
---============================= UNLOAD =====================================
+--=============================== UNLOAD ===================================
 local function unload()
     for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
     for _, d in ipairs(Drawings) do pcall(function() d:Remove() end) end
@@ -966,7 +1123,7 @@ local function unload()
     pcall(function() gui:Destroy() end)
     pcall(function() if espGui then espGui:Destroy() end end)
     getgenv().Marea = nil
-    print(("[%s] déchargé."):format(META.Name))
+    print(("[%s] unloaded."):format(META.Name))
 end
 
 getgenv().Marea = {
@@ -977,4 +1134,4 @@ getgenv().Marea = {
 }
 
 banner()
-notify("MAREA v" .. META.Version .. "  •  MAJ DROITE = menu", T.ACCENT)
+notify("MAREA v" .. META.Version .. "  •  RIGHT SHIFT = menu", T.ACCENT)
