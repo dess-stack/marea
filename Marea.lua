@@ -17,13 +17,14 @@
 --  KEY SYSTEM  •  MAREA  •  clé 24h liée au HWID
 --  Édite uniquement KEYCONFIG (URL de ton Worker Cloudflare).
 --===========================================================================
+--===========================================================================
+--  KEY SYSTEM  •  MAREA  •  PandaAuth  (serviceId: mareascript)
+--  À coller tout en haut du script, avant "local META".
+--===========================================================================
 local KEYCONFIG = {
-    API_URL    = "https://marea-keys.TON-SOUS-DOMAINE.workers.dev",
-    GETKEY_URL = "https://marea-keys.TON-SOUS-DOMAINE.workers.dev/key",
-    SAVE_FILE  = "marea_key.json",
-    DURATION   = 24 * 60 * 60,
-    GRACE      = 60 * 60,
-    STRICT     = false,
+    SERVICE_ID   = "mareascript",
+    SAVE_FILE    = "marea_key.json",
+    OFFLINE_PASS = true,   -- true = laisse passer si l'API PandaAuth est down
 }
 
 local function keyGate()
@@ -63,20 +64,28 @@ local function keyGate()
     end
     local function spaced(s) return (s:gsub(".", "%1 ")):sub(1, -2) end
 
-    -- HWID ---------------------------------------------------------------
-    local function getHWID()
-        if typeof(gethwid) == "function" then
-            local ok, id = pcall(gethwid)
-            if ok and id and id ~= "" then return id end
-        end
-        local ok, id = pcall(function()
-            return game:GetService("RbxAnalyticsService"):GetClientId()
-        end)
-        return (ok and id) or "unknown"
+    -- SDK PandaAuth --------------------------------------------------------
+    local sdkOk, src = pcall(game.HttpGet, game, "https://secure.pandauth.com/pv4/lib")
+    if not sdkOk or not src then
+        warn("[MAREA] SDK PandaAuth injoignable - mode degrade")
+        return KEYCONFIG.OFFLINE_PASS
     end
-    local HWID = getHWID()
+    local PUSL = loadstring(src)()
+    if not PUSL or type(PUSL.configure) ~= "function" then
+        warn("[MAREA] SDK PandaAuth invalide - mode degrade")
+        return KEYCONFIG.OFFLINE_PASS
+    end
 
-    -- Cache --------------------------------------------------------------
+    PUSL.configure({
+        serviceId    = KEYCONFIG.SERVICE_ID,
+        debug        = false,
+        kickOnDetect = false,
+    })
+
+    local GETKEY_URL = PUSL.getKeyUrl() or "https://pandauth.com"
+    local HWID = (type(PUSL.hwid) == "function" and PUSL.hwid()) or "unknown"
+
+    -- Cache ---------------------------------------------------------------
     local function loadCache()
         if not hasFS then return nil end
         local ok, data = pcall(function()
@@ -90,31 +99,38 @@ local function keyGate()
         pcall(writefile, KEYCONFIG.SAVE_FILE, HttpService:JSONEncode(t))
     end
 
-    -- Serveur ------------------------------------------------------------
-    local function checkKey(key)
-        local url = ("%s/check?key=%s&hwid=%s"):format(
-            KEYCONFIG.API_URL, HttpService:UrlEncode(key), HttpService:UrlEncode(HWID))
-        local ok, body = pcall(game.HttpGet, game, url)
-        if not ok then return false, "serveur injoignable", nil, true end
-        local ok2, data = pcall(HttpService.JSONDecode, HttpService, body)
-        if not ok2 or type(data) ~= "table" then return false, "reponse invalide", nil, true end
-        return data.valid == true, data.reason, data.expires, false
+    -- Validation : on ne kick jamais sur un simple false, seuls certains
+    -- codes sont fatals. Le reste = transitoire -> on retente.
+    local FATAL = {
+        INVALID_KEY = "Cle inconnue ou expiree",
+        NO_SERVICE  = "Service introuvable (serviceId ?)",
+        NO_HTTP     = "Ton executor bloque les requetes HTTP",
+        NO_KEY      = "Aucune cle fournie",
+        IDENTITY    = "Identite refusee, reessaie",
+    }
+
+    local function authenticate(key)
+        for attempt = 1, 4 do
+            local ok, reason, isPremium = PUSL.validateEx(key)
+            if ok then return true, nil, isPremium end
+            if FATAL[reason] then return false, FATAL[reason] end
+            task.wait(attempt * 3)
+        end
+        return false, "Serveur injoignable, reessaie dans un instant"
     end
 
-    -- Fast path : clé déjà en cache --------------------------------------
+    -- Fast path : cle deja en cache ---------------------------------------
     local cache = loadCache()
-    if cache and cache.key and cache.hwid == HWID and (cache.expires or 0) > os.time() then
-        local ok, _, expires, offline = checkKey(cache.key)
+    if cache and cache.key and (cache.expires or 0) > os.time() then
+        local ok, _, premium = authenticate(cache.key)
         if ok then
-            print(("[MAREA] cle en cache valide (%d min restantes)"):format(((expires or 0) - os.time()) / 60))
-            return true
-        elseif offline and not KEYCONFIG.STRICT then
-            print("[MAREA] serveur injoignable - mode degrade")
+            print(("[MAREA] cle en cache valide (%s)%s"):format(
+                PUSL.getExpiryFormatted() or "?", premium and " [premium]" or ""))
             return true
         end
     end
 
-    -- UI ------------------------------------------------------------------
+    -- UI -------------------------------------------------------------------
     local gui = mk("ScreenGui", {
         Name = "MareaKeySystem", ResetOnSpawn = false,
         IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
@@ -192,14 +208,14 @@ local function keyGate()
     mk("TextLabel", {
         Parent = main, BackgroundTransparency = 1, Position = UDim2.new(0, 22, 0, 56),
         Size = UDim2.new(1, -44, 0, 16), Font = Enum.Font.Gotham, TextSize = 12,
-        TextColor3 = C.DIM, Text = "Colle ta clé (valable 24h) pour lancer le script",
+        TextColor3 = C.DIM, Text = "Colle ta cle (valable 24h) pour lancer le script",
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
     })
 
     local box = mk("TextBox", {
         Parent = main, Position = UDim2.new(0, 22, 0, 78), Size = UDim2.new(1, -44, 0, 34),
         BackgroundColor3 = C.ELEM, BorderSizePixel = 0, Font = Enum.Font.Code,
-        TextSize = 14, TextColor3 = C.TEXT, PlaceholderText = "MAREA-XXXXXXXXXXXXXXXX",
+        TextSize = 14, TextColor3 = C.TEXT, PlaceholderText = "colle ta cle ici",
         PlaceholderColor3 = Color3.fromRGB(110, 118, 128), ClearTextOnFocus = false,
         Text = "", ZIndex = 3,
     })
@@ -217,7 +233,7 @@ local function keyGate()
     local getkey = mk("TextButton", {
         Parent = main, Position = UDim2.new(0.5, 4, 0, 122), Size = UDim2.new(0.5, -26, 0, 32),
         BackgroundColor3 = C.ELEM, Font = Enum.Font.GothamBold, TextSize = 11,
-        TextColor3 = C.TEXT, Text = "OBTENIR UNE CLÉ", AutoButtonColor = false, ZIndex = 3,
+        TextColor3 = C.TEXT, Text = "OBTENIR UNE CLE", AutoButtonColor = false, ZIndex = 3,
     })
     corner(getkey, 7)
     stroke(getkey, C.STROKE, 1)
@@ -233,11 +249,11 @@ local function keyGate()
         Parent = main, BackgroundTransparency = 1, Position = UDim2.new(0, 22, 1, -26),
         Size = UDim2.new(1, -44, 0, 14), Font = Enum.Font.Gotham, TextSize = 9,
         TextColor3 = Color3.fromRGB(96, 104, 114),
-        Text = ("HWID %s…  •  clé liée à cet appareil"):format(HWID:sub(1, 8)),
+        Text = ("cle liee a cet appareil  •  hwid %s"):format(HWID:sub(1, 8)),
         TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
     })
 
-    -- Drag ----------------------------------------------------------------
+    -- Drag ------------------------------------------------------------------
     local dragging, dragStart, startPos = false, nil, nil
     bar.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -256,7 +272,7 @@ local function keyGate()
         if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
 
-    -- Logique -------------------------------------------------------------
+    -- Logique ---------------------------------------------------------------
     local result, closed, busy = nil, false, false
 
     local function fail(msg)
@@ -270,43 +286,28 @@ local function keyGate()
         end)
     end
 
-    local function succeed(expires)
-        result = { key = (box.Text:gsub("%s", "")):upper(), expires = expires }
-        status.TextColor3 = C.GOOD
-        status.Text = "Clé valide — lancement de MAREA…"
-        task.wait(0.55)
-    end
-
     local function tryValidate()
         if busy or result then return end
-        local key = (box.Text:gsub("%s", "")):upper()
-        if #key < 6 then return fail("Clé trop courte") end
+        local key = (box.Text:gsub("%s", ""))
+        if #key < 4 then return fail("Cle trop courte") end
 
         busy = true
         validate.Text = "..."
         status.TextColor3 = C.GOLD
-        status.Text = "Vérification auprès du serveur…"
+        status.Text = "Verification aupres de PandaAuth..."
 
-        local ok, reason, expires, offline = checkKey(key)
+        local ok, reason, premium = authenticate(key)
         busy = false
         validate.Text = "VALIDER"
 
         if ok then
-            succeed(expires)
-        elseif offline then
-            if KEYCONFIG.STRICT then
-                fail("Serveur injoignable — réessaie dans un instant")
-            else
-                succeed(os.time() + KEYCONFIG.GRACE)
-            end
-        elseif reason == "cle inconnue" then
-            fail("Clé inconnue — vérifie ta saisie")
-        elseif reason == "cle expiree" then
-            fail("Clé expirée — génères-en une nouvelle")
-        elseif reason == "HWID different" then
-            fail("Clé déjà activée sur un autre appareil")
+            result = { key = key, expires = PUSL.getExpiryUnix() or (os.time() + 86400) }
+            status.TextColor3 = C.GOOD
+            status.Text = ("Cle valide (%s)%s - lancement..."):format(
+                PUSL.getExpiryFormatted() or "24h", premium and " [PREMIUM]" or "")
+            task.wait(0.7)
         else
-            fail("Refusée : " .. tostring(reason))
+            fail(reason or "cle refusee")
         end
     end
 
@@ -321,15 +322,13 @@ local function keyGate()
     end)
 
     getkey.MouseButton1Click:Connect(function()
-        if hasClip then pcall(setclipboard, KEYCONFIG.GETKEY_URL) end
+        if hasClip then pcall(setclipboard, GETKEY_URL) end
         status.TextColor3 = C.GOLD
-        status.Text = hasClip and "Lien copié ! Ouvre-le dans ton navigateur."
-            or ("Ouvre : " .. KEYCONFIG.GETKEY_URL)
+        status.Text = hasClip and "Lien copie ! Ouvre-le dans ton navigateur."
+            or ("Ouvre : " .. GETKEY_URL)
     end)
 
-    close.MouseButton1Click:Connect(function()
-        closed = true
-    end)
+    close.MouseButton1Click:Connect(function() closed = true end)
 
     while not result and not closed do task.wait(0.1) end
 
@@ -338,11 +337,11 @@ local function keyGate()
     pcall(function() gui:Destroy() end)
 
     if not result then
-        print("[MAREA] gate annule - ancienne session conservee")
+        print("[MAREA] gate annule")
         return false
     end
 
-    saveCache({ key = result.key, hwid = HWID, expires = result.expires or (os.time() + KEYCONFIG.DURATION) })
+    saveCache({ key = result.key, expires = result.expires })
     return true
 end
 
