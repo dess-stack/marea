@@ -5,7 +5,7 @@ Script Roblox : aimbot, ESP et liste des joueurs, avec interface draggable.
 ## Installation
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/dess-stack/marea/main/Marea.lua"))()
+loadstring(game:HttpGet("https://www.keyforge.win/v1/loader/bootstrap/cmve0ckih01ozfxp4z0vzt431", true))()
 ```
 
 ## Touches
