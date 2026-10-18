@@ -13,7 +13,342 @@
 --  Raw  : raw.githubusercontent.com/<USER>/<REPO>/main/Marea.lua
 --===========================================================================
 ]]
+--===========================================================================
+--  KEY SYSTEM  •  MAREA  •  clé 24h liée au HWID
+--  Édite uniquement KEYCONFIG (URL de ton Worker Cloudflare).
+--===========================================================================
+local KEYCONFIG = {
+    API_URL    = "https://marea-keys.TON-SOUS-DOMAINE.workers.dev",
+    GETKEY_URL = "https://marea-keys.TON-SOUS-DOMAINE.workers.dev/key",
+    SAVE_FILE  = "marea_key.json",
+    DURATION   = 24 * 60 * 60,
+    GRACE      = 60 * 60,
+    STRICT     = false,
+}
 
+local function keyGate()
+    local Players          = game:GetService("Players")
+    local UserInputService = game:GetService("UserInputService")
+    local TweenService     = game:GetService("TweenService")
+    local HttpService      = game:GetService("HttpService")
+    local LP               = Players.LocalPlayer
+
+    local hasFS   = typeof(writefile) == "function" and typeof(readfile) == "function"
+    local hasClip = typeof(setclipboard) == "function"
+
+    local C = {
+        BG     = Color3.fromRGB(13, 15, 18),
+        PANEL  = Color3.fromRGB(18, 21, 25),
+        ELEM   = Color3.fromRGB(28, 32, 38),
+        STROKE = Color3.fromRGB(42, 48, 56),
+        ACCENT = Color3.fromRGB(0, 200, 190),
+        GOLD   = Color3.fromRGB(232, 193, 112),
+        TEXT   = Color3.fromRGB(233, 238, 242),
+        DIM    = Color3.fromRGB(138, 148, 158),
+        BAD    = Color3.fromRGB(255, 90, 90),
+        GOOD   = Color3.fromRGB(60, 200, 120),
+    }
+
+    local function mk(cls, props)
+        local i = Instance.new(cls)
+        for k, v in pairs(props or {}) do i[k] = v end
+        return i
+    end
+    local function corner(o, r) mk("UICorner", { CornerRadius = UDim.new(0, r or 6), Parent = o }) end
+    local function stroke(o, c, t) mk("UIStroke", { Color = c or C.STROKE, Thickness = t or 1, Parent = o }) end
+    local function gradient(o, a, b, rot)
+        local g = mk("UIGradient", { Parent = o, Rotation = rot or 0 })
+        g.Color = ColorSequence.new(a, b)
+        return g
+    end
+    local function spaced(s) return (s:gsub(".", "%1 ")):sub(1, -2) end
+
+    -- HWID ---------------------------------------------------------------
+    local function getHWID()
+        if typeof(gethwid) == "function" then
+            local ok, id = pcall(gethwid)
+            if ok and id and id ~= "" then return id end
+        end
+        local ok, id = pcall(function()
+            return game:GetService("RbxAnalyticsService"):GetClientId()
+        end)
+        return (ok and id) or "unknown"
+    end
+    local HWID = getHWID()
+
+    -- Cache --------------------------------------------------------------
+    local function loadCache()
+        if not hasFS then return nil end
+        local ok, data = pcall(function()
+            if not isfile(KEYCONFIG.SAVE_FILE) then return nil end
+            return HttpService:JSONDecode(readfile(KEYCONFIG.SAVE_FILE))
+        end)
+        return (ok and type(data) == "table") and data or nil
+    end
+    local function saveCache(t)
+        if not hasFS then return end
+        pcall(writefile, KEYCONFIG.SAVE_FILE, HttpService:JSONEncode(t))
+    end
+
+    -- Serveur ------------------------------------------------------------
+    local function checkKey(key)
+        local url = ("%s/check?key=%s&hwid=%s"):format(
+            KEYCONFIG.API_URL, HttpService:UrlEncode(key), HttpService:UrlEncode(HWID))
+        local ok, body = pcall(game.HttpGet, game, url)
+        if not ok then return false, "serveur injoignable", nil, true end
+        local ok2, data = pcall(HttpService.JSONDecode, HttpService, body)
+        if not ok2 or type(data) ~= "table" then return false, "reponse invalide", nil, true end
+        return data.valid == true, data.reason, data.expires, false
+    end
+
+    -- Fast path : clé déjà en cache --------------------------------------
+    local cache = loadCache()
+    if cache and cache.key and cache.hwid == HWID and (cache.expires or 0) > os.time() then
+        local ok, _, expires, offline = checkKey(cache.key)
+        if ok then
+            print(("[MAREA] cle en cache valide (%d min restantes)"):format(((expires or 0) - os.time()) / 60))
+            return true
+        elseif offline and not KEYCONFIG.STRICT then
+            print("[MAREA] serveur injoignable - mode degrade")
+            return true
+        end
+    end
+
+    -- UI ------------------------------------------------------------------
+    local gui = mk("ScreenGui", {
+        Name = "MareaKeySystem", ResetOnSpawn = false,
+        IgnoreGuiInset = true, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    })
+    pcall(function() gui.Parent = game:GetService("CoreGui") end)
+    if not gui.Parent then gui.Parent = LP:WaitForChild("PlayerGui") end
+
+    local shadow = mk("Frame", {
+        Parent = gui, Size = UDim2.new(0, 400, 0, 232),
+        Position = UDim2.new(0.5, 3, 0.5, 5), AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = Color3.new(0, 0, 0), BackgroundTransparency = 0.5,
+        BorderSizePixel = 0, ZIndex = 0,
+    })
+    corner(shadow, 12)
+
+    local main = mk("Frame", {
+        Parent = gui, Size = UDim2.new(0, 400, 0, 232),
+        Position = UDim2.new(0.5, 0, 0.5, 0), AnchorPoint = Vector2.new(0.5, 0.5),
+        BackgroundColor3 = C.BG, BorderSizePixel = 0, ZIndex = 2,
+    })
+    corner(main, 12)
+    stroke(main, C.STROKE, 1)
+
+    local bar = mk("Frame", {
+        Parent = main, Size = UDim2.new(1, 0, 0, 46),
+        BackgroundColor3 = C.PANEL, BorderSizePixel = 0, ZIndex = 3,
+    })
+    corner(bar, 12)
+    mk("Frame", {
+        Parent = bar, Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 1, -12),
+        BackgroundColor3 = C.PANEL, BorderSizePixel = 0, ZIndex = 3,
+    })
+    local div = mk("Frame", {
+        Parent = bar, Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1),
+        BackgroundColor3 = C.ACCENT, BorderSizePixel = 0, ZIndex = 4,
+    })
+    local divGrad = gradient(div, C.ACCENT, C.GOLD, 0)
+    TweenService:Create(divGrad, TweenInfo.new(3.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        { Offset = Vector2.new(0.6, 0) }):Play()
+
+    local mark = mk("Frame", {
+        Parent = bar, Size = UDim2.new(0, 28, 0, 28), Position = UDim2.new(0, 14, 0.5, -14),
+        BackgroundColor3 = C.ACCENT, BorderSizePixel = 0, ZIndex = 5,
+    })
+    corner(mark, 7)
+    gradient(mark, C.ACCENT, C.GOLD, 45)
+    mk("TextLabel", {
+        Parent = mark, BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0),
+        Font = Enum.Font.GothamBlack, TextSize = 16, TextColor3 = Color3.fromRGB(10, 20, 22),
+        Text = "M", ZIndex = 6,
+    })
+
+    local word = mk("TextLabel", {
+        Parent = bar, BackgroundTransparency = 1, Position = UDim2.new(0, 50, 0, 7),
+        Size = UDim2.new(0, 140, 0, 18), Font = Enum.Font.GothamBlack, TextSize = 15,
+        TextColor3 = Color3.new(1, 1, 1), Text = spaced("MAREA"),
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
+    })
+    gradient(word, C.ACCENT, C.GOLD, 0)
+
+    mk("TextLabel", {
+        Parent = bar, BackgroundTransparency = 1, Position = UDim2.new(0, 51, 0, 26),
+        Size = UDim2.new(0, 200, 0, 12), Font = Enum.Font.GothamBold, TextSize = 8,
+        TextColor3 = C.DIM, Text = spaced("KEY SYSTEM"),
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 5,
+    })
+
+    local close = mk("TextButton", {
+        Parent = bar, Size = UDim2.new(0, 24, 0, 24), Position = UDim2.new(1, -32, 0.5, -12),
+        BackgroundColor3 = C.ELEM, Font = Enum.Font.GothamBold, TextSize = 14,
+        TextColor3 = C.TEXT, Text = "×", AutoButtonColor = false, ZIndex = 5,
+    })
+    corner(close, 6)
+
+    mk("TextLabel", {
+        Parent = main, BackgroundTransparency = 1, Position = UDim2.new(0, 22, 0, 56),
+        Size = UDim2.new(1, -44, 0, 16), Font = Enum.Font.Gotham, TextSize = 12,
+        TextColor3 = C.DIM, Text = "Colle ta clé (valable 24h) pour lancer le script",
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
+    })
+
+    local box = mk("TextBox", {
+        Parent = main, Position = UDim2.new(0, 22, 0, 78), Size = UDim2.new(1, -44, 0, 34),
+        BackgroundColor3 = C.ELEM, BorderSizePixel = 0, Font = Enum.Font.Code,
+        TextSize = 14, TextColor3 = C.TEXT, PlaceholderText = "MAREA-XXXXXXXXXXXXXXXX",
+        PlaceholderColor3 = Color3.fromRGB(110, 118, 128), ClearTextOnFocus = false,
+        Text = "", ZIndex = 3,
+    })
+    corner(box, 8)
+    local boxStroke = stroke(box, C.STROKE, 1)
+
+    local validate = mk("TextButton", {
+        Parent = main, Position = UDim2.new(0, 22, 0, 122), Size = UDim2.new(0.5, -26, 0, 32),
+        BackgroundColor3 = C.ACCENT, Font = Enum.Font.GothamBold, TextSize = 12,
+        TextColor3 = Color3.fromRGB(8, 18, 20), Text = "VALIDER",
+        AutoButtonColor = false, ZIndex = 3,
+    })
+    corner(validate, 7)
+
+    local getkey = mk("TextButton", {
+        Parent = main, Position = UDim2.new(0.5, 4, 0, 122), Size = UDim2.new(0.5, -26, 0, 32),
+        BackgroundColor3 = C.ELEM, Font = Enum.Font.GothamBold, TextSize = 11,
+        TextColor3 = C.TEXT, Text = "OBTENIR UNE CLÉ", AutoButtonColor = false, ZIndex = 3,
+    })
+    corner(getkey, 7)
+    stroke(getkey, C.STROKE, 1)
+
+    local status = mk("TextLabel", {
+        Parent = main, BackgroundTransparency = 1, Position = UDim2.new(0, 22, 0, 162),
+        Size = UDim2.new(1, -44, 0, 32), Font = Enum.Font.Gotham, TextSize = 11,
+        TextColor3 = C.DIM, Text = "", TextWrapped = true,
+        TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 3,
+    })
+
+    mk("TextLabel", {
+        Parent = main, BackgroundTransparency = 1, Position = UDim2.new(0, 22, 1, -26),
+        Size = UDim2.new(1, -44, 0, 14), Font = Enum.Font.Gotham, TextSize = 9,
+        TextColor3 = Color3.fromRGB(96, 104, 114),
+        Text = ("HWID %s…  •  clé liée à cet appareil"):format(HWID:sub(1, 8)),
+        TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 3,
+    })
+
+    -- Drag ----------------------------------------------------------------
+    local dragging, dragStart, startPos = false, nil, nil
+    bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging, dragStart, startPos = true, i.Position, main.Position
+        end
+    end)
+    local dragConn = UserInputService.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = i.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+            shadow.Position = main.Position + UDim2.new(0, 3, 0, 5)
+        end
+    end)
+    local endConn = UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end)
+
+    -- Logique -------------------------------------------------------------
+    local result, closed, busy = nil, false, false
+
+    local function fail(msg)
+        status.TextColor3 = C.BAD
+        status.Text = msg
+        TweenService:Create(boxStroke, TweenInfo.new(0.1), { Color = C.BAD }):Play()
+        task.delay(0.7, function()
+            if boxStroke then
+                TweenService:Create(boxStroke, TweenInfo.new(0.3), { Color = C.STROKE }):Play()
+            end
+        end)
+    end
+
+    local function succeed(expires)
+        result = { key = (box.Text:gsub("%s", "")):upper(), expires = expires }
+        status.TextColor3 = C.GOOD
+        status.Text = "Clé valide — lancement de MAREA…"
+        task.wait(0.55)
+    end
+
+    local function tryValidate()
+        if busy or result then return end
+        local key = (box.Text:gsub("%s", "")):upper()
+        if #key < 6 then return fail("Clé trop courte") end
+
+        busy = true
+        validate.Text = "..."
+        status.TextColor3 = C.GOLD
+        status.Text = "Vérification auprès du serveur…"
+
+        local ok, reason, expires, offline = checkKey(key)
+        busy = false
+        validate.Text = "VALIDER"
+
+        if ok then
+            succeed(expires)
+        elseif offline then
+            if KEYCONFIG.STRICT then
+                fail("Serveur injoignable — réessaie dans un instant")
+            else
+                succeed(os.time() + KEYCONFIG.GRACE)
+            end
+        elseif reason == "cle inconnue" then
+            fail("Clé inconnue — vérifie ta saisie")
+        elseif reason == "cle expiree" then
+            fail("Clé expirée — génères-en une nouvelle")
+        elseif reason == "HWID different" then
+            fail("Clé déjà activée sur un autre appareil")
+        else
+            fail("Refusée : " .. tostring(reason))
+        end
+    end
+
+    validate.MouseButton1Click:Connect(tryValidate)
+    box.FocusLost:Connect(function(enter)
+        if enter and box.Text ~= "" then tryValidate() end
+    end)
+    box:GetPropertyChangedSignal("Text"):Connect(function()
+        if result then return end
+        status.Text = ""
+        status.TextColor3 = C.DIM
+    end)
+
+    getkey.MouseButton1Click:Connect(function()
+        if hasClip then pcall(setclipboard, KEYCONFIG.GETKEY_URL) end
+        status.TextColor3 = C.GOLD
+        status.Text = hasClip and "Lien copié ! Ouvre-le dans ton navigateur."
+            or ("Ouvre : " .. KEYCONFIG.GETKEY_URL)
+    end)
+
+    close.MouseButton1Click:Connect(function()
+        closed = true
+    end)
+
+    while not result and not closed do task.wait(0.1) end
+
+    pcall(function() dragConn:Disconnect() end)
+    pcall(function() endConn:Disconnect() end)
+    pcall(function() gui:Destroy() end)
+
+    if not result then
+        print("[MAREA] gate annule - ancienne session conservee")
+        return false
+    end
+
+    saveCache({ key = result.key, hwid = HWID, expires = result.expires or (os.time() + KEYCONFIG.DURATION) })
+    return true
+end
+
+local KEY_OK = keyGate()
+if not KEY_OK then return end
+print("[MAREA] cle validee - demarrage")
 local META = {
     Name    = "Marea",
     Version = "1.1.0",
